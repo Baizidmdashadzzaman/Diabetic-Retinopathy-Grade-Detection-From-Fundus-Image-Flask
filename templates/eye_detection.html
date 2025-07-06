@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+
+{% block title %}Webcam Eye Detection{% endblock %}
+
+{% block content %}
+    <h1>Webcam Eye Detection</h1>
+    <p>This page uses your webcam to detect your eyes in real-time. Please allow camera access.</p>
+
+    <div class="webcam-container">
+        <video id="videoInput" width="640" height="480" autoplay muted></video>
+        <canvas id="overlayCanvas" width="640" height="480"></canvas>
+    </div>
+
+    <div class="controls">
+        <button id="startButton">Start Webcam</button>
+        <button id="stopButton">Stop Webcam</button>
+    </div>
+
+    <div class="eye-output-container">
+        <div class="eye-box">
+            <h2>Left Eye</h2>
+            <canvas id="leftEyeCanvas" width="150" height="100"></canvas>
+        </div>
+        <div class="eye-box">
+            <h2>Right Eye</h2>
+            <canvas id="rightEyeCanvas" width="150" height="100"></canvas>
+        </div>
+    </div>
+
+    <p id="statusMessage"></p>
+
+    <!-- Load face-api.js from CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+
+    <script>
+        const video = document.getElementById('videoInput');
+        const overlayCanvas = document.getElementById('overlayCanvas');
+        const leftEyeCanvas = document.getElementById('leftEyeCanvas');
+        const rightEyeCanvas = document.getElementById('rightEyeCanvas');
+        const startButton = document.getElementById('startButton');
+        const stopButton = document.getElementById('stopButton');
+        const statusMessage = document.getElementById('statusMessage');
+
+        let stream = null;
+        let detectionInterval = null;
+
+        // Load models for face detection and landmark prediction
+        async function loadModels() {
+            statusMessage.textContent = 'Loading face detection models...';
+            try {
+                await faceapi.nets.tinyFaceDetector.loadFromUri('/static/models');
+                await faceapi.nets.faceLandmark68Net.loadFromUri('/static/models');
+                statusMessage.textContent = 'Models loaded. Ready to start webcam.';
+                startButton.disabled = false;
+            } catch (error) {
+                statusMessage.textContent = `Error loading models: ${error.message}. Please check console.`;
+                console.error("Error loading face-api.js models:", error);
+            }
+        }
+
+        async function startWebcam() {
+            if (stream) return; // Already running
+
+            statusMessage.textContent = 'Requesting camera access...';
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ video: {} });
+                video.srcObject = stream;
+                statusMessage.textContent = 'Webcam started. Detecting faces...';
+
+                startButton.disabled = true;
+                stopButton.disabled = false;
+
+                video.addEventListener('play', () => {
+                    overlayCanvas.width = video.videoWidth;
+                    overlayCanvas.height = video.videoHeight;
+                    const displaySize = { width: video.videoWidth, height: video.videoHeight };
+                    faceapi.matchDimensions(overlayCanvas, displaySize);
+
+                    detectionInterval = setInterval(async () => {
+                        const detections = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks();
+
+                        const ctxOverlay = overlayCanvas.getContext('2d');
+                        ctxOverlay.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+                        if (detections) {
+                            const resizedDetections = faceapi.resizeResults(detections, displaySize);
+
+                            // Draw the main face detection box (optional, for debugging)
+                            // faceapi.draw.drawDetections(overlayCanvas, resizedDetections);
+                            // faceapi.draw.drawFaceLandmarks(overlayCanvas, resizedDetections);
+
+                            const landmarks = resizedDetections.landmarks;
+
+                            // Get left and right eye points
+                            const leftEye = landmarks.getLeftEye();
+                            const rightEye = landmarks.getRightEye();
+
+                            // Calculate bounding boxes for eyes
+                            // left eye (indices 36-41)
+                            const leftEyeMinX = Math.min(...leftEye.map(p => p.x));
+                            const leftEyeMaxX = Math.max(...leftEye.map(p => p.x));
+                            const leftEyeMinY = Math.min(...leftEye.map(p => p.y));
+                            const leftEyeMaxY = Math.max(...leftEye.map(p => p.y));
+
+                            // right eye (indices 42-47)
+                            const rightEyeMinX = Math.min(...rightEye.map(p => p.x));
+                            const rightEyeMaxX = Math.max(...rightEye.map(p => p.x));
+                            const rightEyeMinY = Math.min(...rightEye.map(p => p.y));
+                            const rightEyeMaxY = Math.max(...rightEye.map(p => p.y));
+
+                            // Define some padding for the eye boxes
+                            const eyePaddingX = 10; // pixels
+                            const eyePaddingY = 10; // pixels
+
+                            const leftEyeBox = {
+                                x: leftEyeMinX - eyePaddingX,
+                                y: leftEyeMinY - eyePaddingY,
+                                width: (leftEyeMaxX - leftEyeMinX) + (2 * eyePaddingX),
+                                height: (leftEyeMaxY - leftEyeMinY) + (2 * eyePaddingY)
+                            };
+
+                            const rightEyeBox = {
+                                x: rightEyeMinX - eyePaddingX,
+                                y: rightEyeMinY - eyePaddingY,
+                                width: (rightEyeMaxX - rightEyeMinX) + (2 * eyePaddingX),
+                                height: (rightEyeMaxY - rightEyeMinY) + (2 * eyePaddingY)
+                            };
+
+                            // Ensure the boxes don't go out of bounds of the video
+                            leftEyeBox.x = Math.max(0, leftEyeBox.x);
+                            leftEyeBox.y = Math.max(0, leftEyeBox.y);
+                            rightEyeBox.x = Math.max(0, rightEyeBox.x);
+                            rightEyeBox.y = Math.max(0, rightEyeBox.y);
+
+                            // Draw left eye
+                            const ctxLeftEye = leftEyeCanvas.getContext('2d');
+                            ctxLeftEye.clearRect(0, 0, leftEyeCanvas.width, leftEyeCanvas.height);
+                            if (leftEyeBox.width > 0 && leftEyeBox.height > 0) {
+                                try {
+                                    ctxLeftEye.drawImage(
+                                        video,
+                                        leftEyeBox.x, leftEyeBox.y, leftEyeBox.width, leftEyeBox.height,
+                                        0, 0, leftEyeCanvas.width, leftEyeCanvas.height
+                                    );
+                                } catch (e) {
+                                    console.error("Error drawing left eye:", e);
+                                }
+                            }
+
+                            // Draw right eye
+                            const ctxRightEye = rightEyeCanvas.getContext('2d');
+                            ctxRightEye.clearRect(0, 0, rightEyeCanvas.width, rightEyeCanvas.height);
+                            if (rightEyeBox.width > 0 && rightEyeBox.height > 0) {
+                                try {
+                                    ctxRightEye.drawImage(
+                                        video,
+                                        rightEyeBox.x, rightEyeBox.y, rightEyeBox.width, rightEyeBox.height,
+                                        0, 0, rightEyeCanvas.width, rightEyeCanvas.height
+                                    );
+                                } catch (e) {
+                                    console.error("Error drawing right eye:", e);
+                                }
+                            }
+                            statusMessage.textContent = 'Eyes detected!';
+                        } else {
+                            statusMessage.textContent = 'No face detected.';
+                            const ctxLeftEye = leftEyeCanvas.getContext('2d');
+                            ctxLeftEye.clearRect(0, 0, leftEyeCanvas.width, leftEyeCanvas.height);
+                            const ctxRightEye = rightEyeCanvas.getContext('2d');
+                            ctxRightEye.clearRect(0, 0, rightEyeCanvas.width, rightEyeCanvas.height);
+                        }
+                    }, 100); // Run detection every 100ms
+                });
+            } catch (err) {
+                console.error("Error accessing webcam:", err);
+                statusMessage.textContent = `Error: Could not access webcam. Please check permissions. (${err.message})`;
+                startButton.disabled = false;
+                stopButton.disabled = true;
+            }
+        }
+
+        function stopWebcam() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+                stream = null;
+                clearInterval(detectionInterval);
+                detectionInterval = null;
+                statusMessage.textContent = 'Webcam stopped.';
+                startButton.disabled = false;
+                stopButton.disabled = true;
+
+                // Clear canvases
+                overlayCanvas.getContext('2d').clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+                leftEyeCanvas.getContext('2d').clearRect(0, 0, leftEyeCanvas.width, leftEyeCanvas.height);
+                rightEyeCanvas.getContext('2d').clearRect(0, 0, rightEyeCanvas.width, rightEyeCanvas.height);
+            }
+        }
+
+        startButton.addEventListener('click', startWebcam);
+        stopButton.addEventListener('click', stopWebcam);
+
+        // Initially disable buttons until models are loaded
+        startButton.disabled = true;
+        stopButton.disabled = true;
+
+        // Load models on page load
+        loadModels();
+    </script>
+{% endblock %}

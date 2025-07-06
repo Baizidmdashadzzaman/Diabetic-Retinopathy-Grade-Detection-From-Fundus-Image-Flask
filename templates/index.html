@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+
+{% block title %}Upload Image - Diabetic Retinopathy Prediction{% endblock %}
+
+{% block content %}
+    <h1>Diabetic Retinopathy Prediction</h1>
+    <form id="uploadForm" enctype="multipart/form-data">
+        <input type="file" name="file" id="fileInput" accept="image/*">
+        <button type="submit">Predict</button>
+    </form>
+
+    <div class="spinner" id="loadingSpinner"></div>
+    <div id="predictionResult">
+        <h2>Prediction:</h2>
+        <p>Upload an image to get a prediction.</p>
+    </div>
+    <img id="predictionImage" src="#" alt="Uploaded Image Preview" style="display:none;"/>
+{% endblock %}
